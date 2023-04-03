@@ -1,0 +1,82 @@
+
+--1   get the highest invoice per each customer
+select distinct Customer_ID,count(Invoice) over (partition by customer_id ) as cnt_invoices_per_customer from tableRetail 
+order by cnt_invoices_per_customer desc;
+
+--2  get highest price per each customer
+select distinct Customer_ID,max(price) over (partition by customer_id ) as maxx_price_per_customer from tableretail; 
+
+--3   get the average price for customers between two dates
+select distinct customer_id,StockCode,avg(price),InvoiceDate over (partition by InvoiceDate order by InvoiceDate ) as avg_price_for_cust_specific_year from tableretail
+where  InvoiceDate between '12/5/2010 15:38' and  '6/19/2011 16:07';
+
+
+--4  get all sales that customer made in one transaction
+select country,Quantity,Price,sum(Quantity*price) over (partition by country ) as sales from tableretail order by sales desc;
+
+
+--5  get the gap between the last transaction and the next 
+select customer_id, InvoiceDate,(to_date(InvoiceDate,'mm/dd/yyyy hh24:mi')) - first_value (to_date(InvoiceDate,'mm/dd/yyyy hh24:mi'))
+  over( partition by customer_id order by( to_date(InvoiceDate,'mm/dd/yyyy hh24:mi') )) as next_order_gap from tableretail order by customer_id,next_order_gap;
+
+--6    get the second highest customer
+select * from(
+select customer_id,invoice, Quantity,DENSE_RANK() OVER( PARTITION BY  customer_id order by Quantity desc ) as dns_rnk from tableretail) second_highest where dns_rnk=2 ;
+with rfm 
+ as ( 
+/*SELECT 
+customer_id,
+r_score,
+f_score,
+m_score
+FROM 
+(*/
+SELECT distinct (customer_id),
+           NTILE (5) over (order by  reccency desc) as r_score,
+           NTILE (5) over (order by frequency asc) as f_score,
+           NTILE (5) over (order by(monetary) asc) as  m_score, 
+          ((NTILE (5) over (order by frequency asc)+(NTILE (5) over (order by(monetary) asc)))/2) AS fm_score,
+          reccency,frequency,monetary
+FROM (
+    select s.customer_id,  
+     (select max(to_date(invoicedate, 'mm/dd/yyyy hh24:mi')) from tableRetail) - (max(to_date(invoicedate, 'mm/dd/yyyy hh24:mi'))) as reccency,
+           count(distinct (s.invoice)) as frequency,
+           sum(s.price*s.quantity) as monetary
+    FROM tableretail s
+    group by s.CUSTOMER_ID
+    order by s.CUSTOMER_ID    
+    ))
+select c.*,
+(case when  r_score in(4,5) and  fm_score in (4,5) then 'Champions'
+            
+            when (r_score = 5 and fm_score = 2) or (r_score = 4 and fm_score = 2) 
+                or (r_score = 3 and fm_score = 3) or (r_score = 4 and fm_score = 3) then 'Potential Loyalists'
+                
+         when (r_score = 5 and fm_score = 3) or (r_score = 4 and fm_score = 4) 
+             or (r_score = 3 and fm_score = 5) or (r_score = 3 and fm_score = 4) then 'Loyal Customers'
+             
+         when r_score = 5 and fm_score = 1 then 'Recent Customers'
+         
+         when r_score in(3,4) and fm_score = 1 then 'Promising'
+         
+         when (r_score = 3 and fm_score = 2) or (r_score = 2 and fm_score = 3) 
+             or (r_score = 2 and fm_score = 2) then 'Customers Needing Attention'
+             
+         when (r_score = 2 and fm_score = 5) or (r_score = 2 and fm_score = 4) 
+             or (r_score = 1 and fm_score = 3) then 'At Risk'
+             
+         when r_score = 1 and fm_score in (4,5) then 'Cant Lose Them'
+         
+         when r_score = 1 and fm_score = 2 then 'Hibernation'
+         
+         when r_score = 1 and fm_score = 1 then 'Lost'
+         
+
+         else 'others'
+         end) 
+         as segments 
+         
+--select rfm.*, ((f_score+m_score)/2) AS fm_score
+   
+from rfm c join tableretail s on c.customer_id=s.customer_id
+order by s.customer_id, s.invoicedate desc
